@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>테트리스</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #14161c;
+    color: #e8eaf0;
+    font-family: "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  }
+  .game {
+    display: flex;
+    gap: 20px;
+    padding: 20px;
+    background: #1e222b;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  }
+  .board-wrap { position: relative; }
+  canvas {
+    display: block;
+    background: #0b0d12;
+    border: 2px solid #3a4152;
+    border-radius: 4px;
+  }
+  .side {
+    width: 150px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .panel {
+    background: #14161c;
+    border: 1px solid #3a4152;
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .panel h2 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    font-weight: normal;
+    color: #8b93a7;
+    letter-spacing: 1px;
+  }
+  .panel .value { font-size: 22px; font-weight: bold; }
+  #next { margin: 0 auto; border: none; background: transparent; }
+  .help { font-size: 12px; line-height: 1.7; color: #a4abbd; }
+  .help kbd {
+    background: #2a3040;
+    border-radius: 3px;
+    padding: 0 5px;
+    font-family: inherit;
+    color: #e8eaf0;
+  }
+  .overlay {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    background: rgba(11, 13, 18, 0.78);
+    text-align: center;
+  }
+  .overlay.show { display: flex; }
+  .overlay h1 { margin: 0; font-size: 30px; }
+  .overlay p { margin: 0; color: #a4abbd; font-size: 14px; }
+  button {
+    margin-top: 6px;
+    padding: 8px 20px;
+    font: inherit;
+    color: #fff;
+    background: #3b82f6;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  button:hover { background: #2f6fd8; }
+</style>
+</head>
+<body>
+<div class="game">
+  <div class="board-wrap">
+    <canvas id="board" width="300" height="600"></canvas>
+    <div class="overlay show" id="overlay">
+      <h1 id="overlay-title">테트리스</h1>
+      <p id="overlay-msg">시작하려면 Enter 키를 누르세요</p>
+      <button id="start-btn">시작</button>
+    </div>
+  </div>
+  <div class="side">
+    <div class="panel">
+      <h2>다음 블록</h2>
+      <canvas id="next" width="120" height="90"></canvas>
+    </div>
+    <div class="panel"><h2>점수</h2><div class="value" id="score">0</div></div>
+    <div class="panel"><h2>레벨</h2><div class="value" id="level">1</div></div>
+    <div class="panel"><h2>줄</h2><div class="value" id="lines">0</div></div>
+    <div class="panel help">
+      <kbd>←</kbd> <kbd>→</kbd> 이동<br>
+      <kbd>↑</kbd> 회전<br>
+      <kbd>↓</kbd> soft drop<br>
+      <kbd>Space</kbd> 즉시 낙하<br>
+      <kbd>P</kbd> 일시정지
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const COLS = 10, ROWS = 20, SIZE = 30;
+  const board = document.getElementById("board");
+  const ctx = board.getContext("2d");
+  const nextCanvas = document.getElementById("next");
+  const nctx = nextCanvas.getContext("2d");
+  const overlay = document.getElementById("overlay");
+  const overlayTitle = document.getElementById("overlay-title");
+  const overlayMsg = document.getElementById("overlay-msg");
+  const startBtn = document.getElementById("start-btn");
+  const scoreEl = document.getElementById("score");
+  const levelEl = document.getElementById("level");
+  const linesEl = document.getElementById("lines");
+
+  const SHAPES = {
+    I: { color: "#22d3ee", cells: [[0,1],[1,1],[2,1],[3,1]] },
+    O: { color: "#facc15", cells: [[1,0],[2,0],[1,1],[2,1]] },
+    T: { color: "#a855f7", cells: [[1,0],[0,1],[1,1],[2,1]] },
+    S: { color: "#22c55e", cells: [[1,0],[2,0],[0,1],[1,1]] },
+    Z: { color: "#ef4444", cells: [[0,0],[1,0],[1,1],[2,1]] },
+    J: { color: "#3b82f6", cells: [[0,0],[0,1],[1,1],[2,1]] },
+    L: { color: "#f97316", cells: [[2,0],[0,1],[1,1],[2,1]] },
+  };
+  const TYPES = Object.keys(SHAPES);
+  const LINE_SCORES = [0, 100, 300, 500, 800];
+
+  let grid, current, nextType, bag;
+  let score, level, lines;
+  let dropInterval, dropTimer, lastTime;
+  let state = "ready"; // ready | playing | paused | over
+  let rafId = null;
+
+  const newGrid = () => Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+
+  // 7-bag 방식으로 블록이 고르게 나오게 함
+  function nextFromBag() {
+    if (!bag || bag.length === 0) {
+      bag = [...TYPES];
+      for (let i = bag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [bag[i], bag[j]] = [bag[j], bag[i]];
+      }
+    }
+    return bag.pop();
+  }
+
+  function makePiece(type) {
+    const { cells } = SHAPES[type];
+    // 모든 도형은 4x4 격자 안의 좌표로 관리하고, 회전은 4x4 기준으로 수행
+    const size = type === "I" ? 4 : type === "O" ? 4 : 3;
+    return { type, size, cells: cells.map(([x, y]) => [x, y]), x: Math.floor((COLS - size) / 2), y: 0 };
+  }
+
+  function rotatedCells(piece) {
+    if (piece.type === "O") return piece.cells;
+    const n = piece.size;
+    return piece.cells.map(([x, y]) => [n - 1 - y, x]); // 시계 방향 회전
+  }
+
+  function collides(cells, px, py) {
+    return cells.some(([cx, cy]) => {
+      const x = px + cx, y = py + cy;
+      return x < 0 || x >= COLS || y >= ROWS || (y >= 0 && grid[y][x]);
+    });
+  }
+
+  function spawn() {
+    current = makePiece(nextType);
+    nextType = nextFromBag();
+    drawNext();
+    if (collides(current.cells, current.x, current.y)) gameOver();
+  }
+
+  function reset() {
+    grid = newGrid();
+    bag = [];
+    score = 0; level = 1; lines = 0;
+    dropInterval = 800;
+    dropTimer = 0;
+    nextType = nextFromBag();
+    updateStats();
+    spawn();
+  }
+
+  function updateStats() {
+    scoreEl.textContent = score;
+    levelEl.textContent = level;
+    linesEl.textContent = lines;
+  }
+
+  function move(dx, dy) {
+    if (!collides(current.cells, current.x + dx, current.y + dy)) {
+      current.x += dx;
+      current.y += dy;
+      return true;
+    }
+    return false;
+  }
+
+  function rotate() {
+    const cells = rotatedCells(current);
+    // 벽 근처에서 회전할 수 있도록 좌우로 조금씩 밀어보는 wall kick
+    for (const kick of [0, -1, 1, -2, 2]) {
+      if (!collides(cells, current.x + kick, current.y)) {
+        current.cells = cells;
+        current.x += kick;
+        return;
+      }
+    }
+  }
+
+  function lock() {
+    for (const [cx, cy] of current.cells) {
+      const x = current.x + cx, y = current.y + cy;
+      if (y >= 0) grid[y][x] = SHAPES[current.type].color;
+    }
+    clearLines();
+    if (state === "playing") spawn();
+  }
+
+  function clearLines() {
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+      if (grid[y].every(Boolean)) {
+        grid.splice(y, 1);
+        grid.unshift(Array(COLS).fill(null));
+        cleared++;
+        y++; // 내려온 줄을 다시 검사
+      }
+    }
+    if (cleared) {
+      score += LINE_SCORES[cleared] * level;
+      lines += cleared;
+      level = Math.floor(lines / 10) + 1;
+      dropInterval = Math.max(100, 800 - (level - 1) * 70);
+      updateStats();
+    }
+  }
+
+  function softDrop() {
+    if (move(0, 1)) {
+      score += 1;
+      updateStats();
+    } else {
+      lock();
+    }
+    dropTimer = 0;
+  }
+
+  function hardDrop() {
+    let dist = 0;
+    while (move(0, 1)) dist++;
+    score += dist * 2;
+    updateStats();
+    lock();
+    dropTimer = 0;
+  }
+
+  function ghostY() {
+    let y = current.y;
+    while (!collides(current.cells, current.x, y + 1)) y++;
+    return y;
+  }
+
+  function drawCell(c, x, y, color, size = SIZE, alpha = 1) {
+    c.globalAlpha = alpha;
+    c.fillStyle = color;
+    c.fillRect(x * size + 1, y * size + 1, size - 2, size - 2);
+    c.fillStyle = "rgba(255,255,255,0.25)";
+    c.fillRect(x * size + 1, y * size + 1, size - 2, 4);
+    c.globalAlpha = 1;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, board.width, board.height);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 1;
+    for (let x = 1; x < COLS; x++) {
+      ctx.beginPath(); ctx.moveTo(x * SIZE, 0); ctx.lineTo(x * SIZE, board.height); ctx.stroke();
+    }
+    for (let y = 1; y < ROWS; y++) {
+      ctx.beginPath(); ctx.moveTo(0, y * SIZE); ctx.lineTo(board.width, y * SIZE); ctx.stroke();
+    }
+
+    for (let y = 0; y < ROWS; y++)
+      for (let x = 0; x < COLS; x++)
+        if (grid[y][x]) drawCell(ctx, x, y, grid[y][x]);
+
+    if (current && state !== "over") {
+      const color = SHAPES[current.type].color;
+      const gy = ghostY();
+      for (const [cx, cy] of current.cells) drawCell(ctx, current.x + cx, gy + cy, color, SIZE, 0.2);
+      for (const [cx, cy] of current.cells) drawCell(ctx, current.x + cx, current.y + cy, color);
+    }
+  }
+
+  function drawNext() {
+    nctx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+    const { cells, color } = SHAPES[nextType];
+    const s = 24;
+    const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+    const w = Math.max(...xs) - Math.min(...xs) + 1;
+    const h = Math.max(...ys) - Math.min(...ys) + 1;
+    const ox = (nextCanvas.width - w * s) / 2 / s - Math.min(...xs);
+    const oy = (nextCanvas.height - h * s) / 2 / s - Math.min(...ys);
+    for (const [cx, cy] of cells) drawCell(nctx, cx + ox, cy + oy, color, s);
+  }
+
+  function showOverlay(title, msg, btn) {
+    overlayTitle.textContent = title;
+    overlayMsg.textContent = msg;
+    startBtn.textContent = btn;
+    overlay.classList.add("show");
+  }
+
+  function gameOver() {
+    state = "over";
+    showOverlay("게임 오버", `점수 ${score} · Enter 키로 다시 시작`, "다시 시작");
+  }
+
+  function start() {
+    reset();
+    state = "playing";
+    overlay.classList.remove("show");
+    lastTime = performance.now();
+    if (!rafId) rafId = requestAnimationFrame(loop);
+  }
+
+  function togglePause() {
+    if (state === "playing") {
+      state = "paused";
+      showOverlay("일시정지", "P 키 또는 Enter 키로 계속", "계속");
+    } else if (state === "paused") {
+      state = "playing";
+      overlay.classList.remove("show");
+      lastTime = performance.now();
+    }
+  }
+
+  function loop(now) {
+    if (state === "playing") {
+      dropTimer += now - lastTime;
+      if (dropTimer >= dropInterval) {
+        dropTimer = 0;
+        if (!move(0, 1)) lock();
+      }
+    }
+    lastTime = now;
+    if (grid) draw();
+    rafId = requestAnimationFrame(loop);
+  }
+
+  document.addEventListener("keydown", (e) => {
+    const key = e.key;
+    if (key === "Enter") {
+      e.preventDefault();
+      if (state === "paused") togglePause();
+      else if (state !== "playing") start();
+      return;
+    }
+    if (key === "p" || key === "P") { togglePause(); return; }
+    if (state !== "playing") return;
+
+    switch (key) {
+      case "ArrowLeft": move(-1, 0); break;
+      case "ArrowRight": move(1, 0); break;
+      case "ArrowDown": softDrop(); break;
+      case "ArrowUp": rotate(); break;
+      case " ": hardDrop(); break;
+      default: return;
+    }
+    e.preventDefault();
+  });
+
+  startBtn.addEventListener("click", () => {
+    if (state === "paused") togglePause();
+    else start();
+  });
+
+  grid = newGrid();
+  draw();
+})();
+</script>
+</body>
+</html>
