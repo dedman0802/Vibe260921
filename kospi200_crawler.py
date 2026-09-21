@@ -132,7 +132,12 @@ def fetch_constituents(delay=0.2):
 
 
 SHEETS = [
-    # (시트 이름, 결과 키, [(머리글, 필드), ...])
+    # (시트 이름, 결과 키, [(머리글, 필드), ...])  -- 엑셀을 열면 첫 시트가 보이므로 구성 종목을 맨 앞에 둔다
+    ("구성 종목", "constituents", [
+        ("종목코드", "code"), ("종목명", "name"), ("현재가", "price"), ("전일대비", "change"),
+        ("등락률(%)", "change_rate"), ("거래량(주)", "volume"), ("거래대금(백만원)", "trading_value"),
+        ("시가총액(억원)", "market_cap"),
+    ]),
     ("지수 요약", "summary", [
         ("지수명", "name"), ("코드", "code"), ("현재값", "close"), ("전일대비", "change"),
         ("등락률(%)", "change_rate"), ("시가", "open"), ("고가", "high"), ("저가", "low"),
@@ -142,11 +147,6 @@ SHEETS = [
     ("일별 시세", "history", [
         ("날짜", "date"), ("종가", "close"), ("전일대비", "change"), ("등락률(%)", "change_rate"),
         ("시가", "open"), ("고가", "high"), ("저가", "low"),
-    ]),
-    ("구성 종목", "constituents", [
-        ("종목코드", "code"), ("종목명", "name"), ("현재가", "price"), ("전일대비", "change"),
-        ("등락률(%)", "change_rate"), ("거래량(주)", "volume"), ("거래대금(백만원)", "trading_value"),
-        ("시가총액(억원)", "market_cap"),
     ]),
 ]
 
